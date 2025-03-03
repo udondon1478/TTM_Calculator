@@ -1,5 +1,7 @@
 # TTM Rate Conversion Application for Tax Filing
 
+[日本語のREADME](README.ja.md)
+
 This application helps with tax filing by automatically converting USD transactions to JPY using Mizuho Bank's TTM (Telegraphic Transfer Middle) rates.
 
 ## Features
@@ -63,8 +65,8 @@ This application helps with tax filing by automatically converting USD transacti
 ## CSV Format Requirements
 
 The application expects CSV files with at least the following columns:
-- `date`: Transaction date (in a format parseable by pandas)
-- `balance`: Transaction amount in USD
+- `Transaction Date`: Transaction date (in a format parseable by pandas)
+- `Credit amount`: Transaction amount in USD
 
 ## License
 
