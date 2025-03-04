@@ -6,7 +6,7 @@ interface Transaction {
   amount_usd: number;
   ttm_rate: number;
   amount_jpy: number;
-  month: string;
+  vendor: string;
 }
 
 interface ResultsTableProps {
@@ -31,7 +31,7 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({ data }) => {
   };
 
   const sortedTransactions = [...data.transactions].sort((a, b) => {
-    if (sortField === 'date' || sortField === 'month') {
+    if (sortField === 'date' || sortField === 'vendor') {
       return sortDirection === 'asc'
         ? a[sortField].localeCompare(b[sortField])
         : b[sortField].localeCompare(a[sortField]);
@@ -74,9 +74,9 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({ data }) => {
               <th
                 scope="col"
                 className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer"
-                onClick={() => handleSort('month')}
+                onClick={() => handleSort('vendor')}
               >
-                月 <SortIcon field="month" />
+                取引先 <SortIcon field="vendor" />
               </th>
               <th
                 scope="col"
@@ -108,7 +108,7 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({ data }) => {
                   {transaction.date}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-200">
-                  {transaction.month}
+                  {transaction.vendor}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-200">
                   ${transaction.amount_usd.toFixed(2)}
