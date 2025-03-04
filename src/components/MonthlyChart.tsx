@@ -27,11 +27,15 @@ interface MonthlyData {
   month: string;          // 月（例：'2024-01'）
   total_usd: number;      // USD合計
   total_jpy: number;      // JPY合計
+  total_debit_usd: number; // 出金額USD合計
+  total_debit_jpy: number; // 出金額JPY合計
   transaction_count: number; // 取引数
   vendor_transactions: {
     [vendor: string]: {
       usd: number;
       jpy: number;
+      debit_usd: number;
+      debit_jpy: number;
       count: number;
     };
   };
@@ -44,7 +48,7 @@ interface MonthlyChartProps {
 }
 
 export const MonthlyChart: React.FC<MonthlyChartProps> = ({ data }) => {
-  const [chartType, setChartType] = useState<'summary' | 'vendors'>('summary');
+  const [chartType, setChartType] = useState<'summary' | 'vendors' | 'profit'>('summary');
 
   // Sort months chronologically
   const sortedMonthly = [...data.monthly].sort((a, b) => {
@@ -58,7 +62,13 @@ export const MonthlyChart: React.FC<MonthlyChartProps> = ({ data }) => {
   const months = sortedMonthly.map((item) => item.month);
   const jpyValues = sortedMonthly.map((item) => item.total_jpy);
   const usdValues = sortedMonthly.map((item) => item.total_usd);
+  const debitJpyValues = sortedMonthly.map((item) => item.total_debit_jpy);
+  const debitUsdValues = sortedMonthly.map((item) => item.total_debit_usd);
   const transactionCounts = sortedMonthly.map((item) => item.transaction_count);
+
+  // Calculate monthly profits
+  const profitUsdValues = sortedMonthly.map((item) => item.total_usd - item.total_debit_usd);
+  const profitJpyValues = sortedMonthly.map((item) => item.total_jpy - item.total_debit_jpy);
 
   // Get unique vendors and generate colors for them
   const vendors = Array.from(new Set(
@@ -81,7 +91,7 @@ export const MonthlyChart: React.FC<MonthlyChartProps> = ({ data }) => {
     datasets: [
       {
         type: 'bar' as const,
-        label: 'JPY (円)',
+        label: '入金額(JPY)',
         data: jpyValues,
         backgroundColor: 'rgba(54, 162, 235, 0.5)',
         borderColor: 'rgba(54, 162, 235, 1)',
@@ -90,10 +100,28 @@ export const MonthlyChart: React.FC<MonthlyChartProps> = ({ data }) => {
       },
       {
         type: 'bar' as const,
-        label: 'USD ($)',
-        data: usdValues,
+        label: '出金額(JPY)',
+        data: debitJpyValues,
         backgroundColor: 'rgba(255, 99, 132, 0.5)',
         borderColor: 'rgba(255, 99, 132, 1)',
+        borderWidth: 1,
+        yAxisID: 'y',
+      },
+      {
+        type: 'bar' as const,
+        label: '入金額(USD)',
+        data: usdValues,
+        backgroundColor: 'rgba(75, 192, 192, 0.5)',
+        borderColor: 'rgba(75, 192, 192, 1)',
+        borderWidth: 1,
+        yAxisID: 'y1',
+      },
+      {
+        type: 'bar' as const,
+        label: '出金額(USD)',
+        data: debitUsdValues,
+        backgroundColor: 'rgba(255, 159, 64, 0.5)',
+        borderColor: 'rgba(255, 159, 64, 1)',
         borderWidth: 1,
         yAxisID: 'y1',
       },
@@ -101,10 +129,42 @@ export const MonthlyChart: React.FC<MonthlyChartProps> = ({ data }) => {
         type: 'line' as const,
         label: '取引数',
         data: transactionCounts,
-        backgroundColor: 'rgba(75, 192, 192, 0.5)',
-        borderColor: 'rgba(75, 192, 192, 1)',
+        backgroundColor: 'rgba(153, 102, 255, 0.5)',
+        borderColor: 'rgba(153, 102, 255, 1)',
         borderWidth: 1,
         yAxisID: 'y2',
+      },
+    ],
+  };
+
+  const profitChartData = {
+    labels: months,
+    datasets: [
+      {
+        type: 'bar' as const,
+        label: '利益(JPY)',
+        data: profitJpyValues,
+        backgroundColor: profitJpyValues.map(value => 
+          value >= 0 ? 'rgba(75, 192, 192, 0.5)' : 'rgba(255, 99, 132, 0.5)'
+        ),
+        borderColor: profitJpyValues.map(value => 
+          value >= 0 ? 'rgba(75, 192, 192, 1)' : 'rgba(255, 99, 132, 1)'
+        ),
+        borderWidth: 1,
+        yAxisID: 'y',
+      },
+      {
+        type: 'bar' as const,
+        label: '利益(USD)',
+        data: profitUsdValues,
+        backgroundColor: profitUsdValues.map(value => 
+          value >= 0 ? 'rgba(54, 162, 235, 0.5)' : 'rgba(255, 159, 64, 0.5)'
+        ),
+        borderColor: profitUsdValues.map(value => 
+          value >= 0 ? 'rgba(54, 162, 235, 1)' : 'rgba(255, 159, 64, 1)'
+        ),
+        borderWidth: 1,
+        yAxisID: 'y1',
       },
     ],
   };
@@ -173,7 +233,47 @@ export const MonthlyChart: React.FC<MonthlyChartProps> = ({ data }) => {
       },
       title: {
         display: true,
-        text: '月別収入集計',
+        text: '月別収支集計',
+      },
+    },
+  };
+
+  const profitOptions = {
+    responsive: true,
+    interaction: {
+      mode: 'index' as const,
+      intersect: false,
+    },
+    scales: {
+      y: {
+        type: 'linear' as const,
+        display: true,
+        position: 'left' as const,
+        title: {
+          display: true,
+          text: 'JPY (円)',
+        },
+      },
+      y1: {
+        type: 'linear' as const,
+        display: true,
+        position: 'right' as const,
+        grid: {
+          drawOnChartArea: false,
+        },
+        title: {
+          display: true,
+          text: 'USD ($)',
+        },
+      },
+    },
+    plugins: {
+      legend: {
+        position: 'top' as const,
+      },
+      title: {
+        display: true,
+        text: '月別利益集計',
       },
     },
   };
@@ -249,7 +349,17 @@ export const MonthlyChart: React.FC<MonthlyChartProps> = ({ data }) => {
               : 'bg-gray-200 dark:bg-gray-700'
           }`}
         >
-          サマリー
+          収支概要
+        </button>
+        <button
+          onClick={() => setChartType('profit')}
+          className={`px-4 py-2 rounded ${
+            chartType === 'profit'
+              ? 'bg-blue-500 text-white'
+              : 'bg-gray-200 dark:bg-gray-700'
+          }`}
+        >
+          利益推移
         </button>
         <button
           onClick={() => setChartType('vendors')}
@@ -262,10 +372,15 @@ export const MonthlyChart: React.FC<MonthlyChartProps> = ({ data }) => {
           取引先別
         </button>
       </div>
-      <div className="bg-white dark:bg-gray-800 p-4 rounded-lg">
-        {chartType === 'summary' ? (
+
+      <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
+        {chartType === 'summary' && (
           <Chart type="bar" data={summaryChartData} options={summaryOptions} />
-        ) : (
+        )}
+        {chartType === 'profit' && (
+          <Chart type="bar" data={profitChartData} options={profitOptions} />
+        )}
+        {chartType === 'vendors' && (
           <Chart type="line" data={vendorChartData} options={vendorOptions} />
         )}
       </div>
