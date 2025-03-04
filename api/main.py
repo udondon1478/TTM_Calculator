@@ -327,6 +327,7 @@ class ProcessResult(BaseModel):
     transactions: List[Dict[str, Any]]
     monthly: List[Dict[str, Any]]
     summary: Dict[str, Any]
+    profit_analysis: Dict[str, Any]  # 利益分析情報を追加
 
 @app.post("/api/process")
 async def process_csv(file: UploadFile):
@@ -348,7 +349,7 @@ async def process_csv(file: UploadFile):
         # Parse CSV
         try:
             df = pd.read_csv(io.StringIO(csv_content))
-            logger.info(f"CSV columns found: {', '.join(df.columns)}")  # カラム名をログに出力
+            logger.info(f"CSV columns found: {', '.join(df.columns)}")
         except Exception as e:
             raise HTTPException(
                 status_code=400,
@@ -356,7 +357,7 @@ async def process_csv(file: UploadFile):
             )
         
         # Validate required columns
-        required_columns = ['Transaction date', 'Credit amount']
+        required_columns = ['Transaction date', 'Credit amount', 'Debit amount']
         missing_columns = [col for col in required_columns if col not in df.columns]
         
         if missing_columns:
@@ -365,12 +366,13 @@ async def process_csv(file: UploadFile):
                 detail=f"Missing required columns: {', '.join(missing_columns)}"
             )
         
-        # データの中身を確認
-        logger.info(f"First row of data: {df.iloc[0].to_dict()}")
-        
         # Process transactions
         transactions = []
         errors = []
+        last_withdrawal_date = None
+        last_withdrawal_amount = 0
+        cumulative_profit = 0
+        
         for index, row in df.iterrows():
             try:
                 # Parse date with explicit format
@@ -380,15 +382,18 @@ async def process_csv(file: UploadFile):
                 # MM-DD-YYYY形式からYYYY-MM-DD形式に変換
                 date_obj = pd.to_datetime(date_str, format='%m-%d-%Y')
                 iso_date = date_obj.strftime('%Y-%m-%d')
-                logger.info(f"Converted date: {iso_date}")  # 変換後の日付をログ出力
+                logger.info(f"Converted date: {iso_date}")
                 
-                # Get amount in USD
-                amount_str = str(row['Credit amount'])
-                logger.info(f"Processing amount: {amount_str}")
+                # Get amounts in USD
+                credit_amount_str = str(row['Credit amount'])
+                debit_amount_str = str(row['Debit amount'])
                 
                 # 数値に変換する前に不要な文字を削除
-                amount_str = amount_str.replace(',', '').replace('$', '').strip()
-                amount_usd = float(amount_str)
+                credit_amount_str = credit_amount_str.replace(',', '').replace('$', '').strip()
+                debit_amount_str = debit_amount_str.replace(',', '').replace('$', '').strip()
+                
+                amount_usd = float(credit_amount_str) if credit_amount_str else 0
+                debit_usd = float(debit_amount_str) if debit_amount_str else 0
 
                 # Extract vendor from Description
                 description = str(row.get('Description', ''))
@@ -397,7 +402,6 @@ async def process_csv(file: UploadFile):
                     vendor = description.replace('Payment from ', '').strip()
                 
                 try:
-                    # TTMレート取得を個別にtry-exceptで囲む
                     ttm_rate = get_ttm_rate(iso_date)
                     logger.info(f"TTM rate found for {iso_date}: {ttm_rate}")
                 except HTTPException as he:
@@ -405,8 +409,20 @@ async def process_csv(file: UploadFile):
                     errors.append(f"Error in row {index + 1}: No TTM rate available for date {iso_date}")
                     continue
                 
-                # Calculate JPY amount
-                amount_jpy = amount_usd * ttm_rate
+                # Calculate JPY amounts with rounding
+                amount_jpy = round(amount_usd * ttm_rate)
+                debit_jpy = round(debit_usd * ttm_rate)
+                
+                # Update profit tracking
+                if debit_usd > 0:
+                    if last_withdrawal_date:
+                        # 前回出金時からの収入を計算
+                        period_income = sum(t['amount_usd'] for t in transactions 
+                                         if t['date'] > last_withdrawal_date and t['date'] <= iso_date)
+                        # 現在の出金額を差し引いた残存利益を計算
+                        cumulative_profit = period_income - debit_usd
+                    last_withdrawal_date = iso_date
+                    last_withdrawal_amount = debit_usd
                 
                 # Extract month
                 month = date_obj.strftime('%Y-%m')
@@ -414,10 +430,13 @@ async def process_csv(file: UploadFile):
                 transactions.append({
                     'date': iso_date,
                     'amount_usd': amount_usd,
+                    'debit_usd': debit_usd,
                     'ttm_rate': ttm_rate,
                     'amount_jpy': amount_jpy,
+                    'debit_jpy': debit_jpy,
                     'month': month,
-                    'vendor': vendor
+                    'vendor': vendor,
+                    'cumulative_profit': cumulative_profit
                 })
             except Exception as e:
                 error_msg = f"Error in row {index + 1}: {type(e).__name__} - {str(e)}"
@@ -426,7 +445,6 @@ async def process_csv(file: UploadFile):
                 continue
         
         if errors:
-            # エラーが発生した場合は詳細なメッセージを返す
             error_message = f"Error processing CSV: {'; '.join(errors)}"
             logger.error(error_message)
             raise HTTPException(
@@ -446,12 +464,16 @@ async def process_csv(file: UploadFile):
                     'month': month,
                     'total_usd': 0,
                     'total_jpy': 0,
+                    'total_debit_usd': 0,
+                    'total_debit_jpy': 0,
                     'transaction_count': 0,
                     'vendor_transactions': {}
                 }
             
             monthly_data[month]['total_usd'] += transaction['amount_usd']
             monthly_data[month]['total_jpy'] += transaction['amount_jpy']
+            monthly_data[month]['total_debit_usd'] += transaction['debit_usd']
+            monthly_data[month]['total_debit_jpy'] += transaction['debit_jpy']
             monthly_data[month]['transaction_count'] += 1
             
             # Add vendor-specific data
@@ -459,11 +481,15 @@ async def process_csv(file: UploadFile):
                 monthly_data[month]['vendor_transactions'][vendor] = {
                     'usd': 0,
                     'jpy': 0,
+                    'debit_usd': 0,
+                    'debit_jpy': 0,
                     'count': 0
                 }
             
             monthly_data[month]['vendor_transactions'][vendor]['usd'] += transaction['amount_usd']
             monthly_data[month]['vendor_transactions'][vendor]['jpy'] += transaction['amount_jpy']
+            monthly_data[month]['vendor_transactions'][vendor]['debit_usd'] += transaction['debit_usd']
+            monthly_data[month]['vendor_transactions'][vendor]['debit_jpy'] += transaction['debit_jpy']
             monthly_data[month]['vendor_transactions'][vendor]['count'] += 1
         
         monthly = list(monthly_data.values())
@@ -471,22 +497,37 @@ async def process_csv(file: UploadFile):
         # Calculate overall summary
         total_usd = sum(transaction['amount_usd'] for transaction in transactions)
         total_jpy = sum(transaction['amount_jpy'] for transaction in transactions)
+        total_debit_usd = sum(transaction['debit_usd'] for transaction in transactions)
+        total_debit_jpy = sum(transaction['debit_jpy'] for transaction in transactions)
+        
+        # 利益分析情報の作成
+        profit_analysis = {
+            'last_withdrawal_date': last_withdrawal_date,
+            'last_withdrawal_amount_usd': last_withdrawal_amount,
+            'last_withdrawal_amount_jpy': round(last_withdrawal_amount * get_ttm_rate(last_withdrawal_date)) if last_withdrawal_date else 0,
+            'cumulative_profit_usd': cumulative_profit,
+            'cumulative_profit_jpy': round(cumulative_profit * get_ttm_rate(transactions[-1]['date'])) if transactions else 0,
+            'total_profit_usd': total_usd - total_debit_usd,
+            'total_profit_jpy': total_jpy - total_debit_jpy
+        }
         
         summary = {
             'totalTransactions': len(transactions),
             'totalUsd': total_usd,
             'totalJpy': total_jpy,
+            'totalDebitUsd': total_debit_usd,
+            'totalDebitJpy': total_debit_jpy,
             'averageTtmRate': total_jpy / total_usd if total_usd else 0
         }
         
         return {
             'transactions': transactions,
             'monthly': monthly,
-            'summary': summary
+            'summary': summary,
+            'profit_analysis': profit_analysis
         }
     
     except Exception as e:
-        # エラーの詳細情報を取得
         error_detail = f"{type(e).__name__}: {str(e)}"
         error_message = f"Error processing CSV: {error_detail}"
         logger.error(error_message)
@@ -507,7 +548,7 @@ async def export_csv(data: ExportData):
         writer = csv.writer(output)
         
         # Write header
-        writer.writerow(['Date', 'Month', 'USD Amount', 'TTM Rate', 'JPY Amount'])
+        writer.writerow(['Date', 'Month', 'USD Amount', 'Debit USD', 'TTM Rate', 'JPY Amount', 'Debit JPY', 'Cumulative Profit'])
         
         # Write transaction data
         for transaction in data.results.transactions:
@@ -515,22 +556,38 @@ async def export_csv(data: ExportData):
                 transaction['date'],
                 transaction['month'],
                 transaction['amount_usd'],
+                transaction['debit_usd'],
                 transaction['ttm_rate'],
-                transaction['amount_jpy']
+                transaction['amount_jpy'],
+                transaction['debit_jpy'],
+                transaction['cumulative_profit']
             ])
         
         # Write monthly summary
         writer.writerow([])
         writer.writerow(['Monthly Summary'])
-        writer.writerow(['Month', 'Total USD', 'Total JPY', 'Transaction Count'])
+        writer.writerow(['Month', 'Total USD', 'Total Debit USD', 'Total JPY', 'Total Debit JPY', 'Transaction Count'])
         
         for month in data.results.monthly:
             writer.writerow([
                 month['month'],
                 month['total_usd'],
+                month['total_debit_usd'],
                 month['total_jpy'],
+                month['total_debit_jpy'],
                 month['transaction_count']
             ])
+        
+        # Write profit analysis
+        writer.writerow([])
+        writer.writerow(['Profit Analysis'])
+        writer.writerow(['Last Withdrawal Date', data.results.profit_analysis['last_withdrawal_date']])
+        writer.writerow(['Last Withdrawal Amount (USD)', data.results.profit_analysis['last_withdrawal_amount_usd']])
+        writer.writerow(['Last Withdrawal Amount (JPY)', data.results.profit_analysis['last_withdrawal_amount_jpy']])
+        writer.writerow(['Cumulative Profit (USD)', data.results.profit_analysis['cumulative_profit_usd']])
+        writer.writerow(['Cumulative Profit (JPY)', data.results.profit_analysis['cumulative_profit_jpy']])
+        writer.writerow(['Total Profit (USD)', data.results.profit_analysis['total_profit_usd']])
+        writer.writerow(['Total Profit (JPY)', data.results.profit_analysis['total_profit_jpy']])
         
         # Write overall summary
         writer.writerow([])
@@ -538,13 +595,17 @@ async def export_csv(data: ExportData):
         writer.writerow([
             'Total Transactions',
             'Total USD',
+            'Total Debit USD',
             'Total JPY',
+            'Total Debit JPY',
             'Average TTM Rate'
         ])
         writer.writerow([
             data.results.summary['totalTransactions'],
             data.results.summary['totalUsd'],
+            data.results.summary['totalDebitUsd'],
             data.results.summary['totalJpy'],
+            data.results.summary['totalDebitJpy'],
             data.results.summary['averageTtmRate']
         ])
         
@@ -586,6 +647,9 @@ async def export_pdf(data: ExportData):
                 th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
                 th {{ background-color: #f2f2f2; }}
                 .summary {{ background-color: #f9f9f9; padding: 15px; border-radius: 5px; }}
+                .profit-analysis {{ background-color: #e8f5e9; padding: 15px; border-radius: 5px; margin-top: 20px; }}
+                .profit-positive {{ color: #2e7d32; }}
+                .profit-negative {{ color: #c62828; }}
             </style>
         </head>
         <body>
@@ -598,20 +662,27 @@ async def export_pdf(data: ExportData):
                     <th>Date</th>
                     <th>Month</th>
                     <th>USD Amount</th>
+                    <th>Debit USD</th>
                     <th>TTM Rate</th>
                     <th>JPY Amount</th>
+                    <th>Debit JPY</th>
+                    <th>Cumulative Profit</th>
                 </tr>
         """
         
         # Add transaction rows
         for transaction in data.results.transactions:
+            profit_class = 'profit-positive' if transaction['cumulative_profit'] >= 0 else 'profit-negative'
             html_content += f"""
                 <tr>
                     <td>{transaction['date']}</td>
                     <td>{transaction['month']}</td>
                     <td>${transaction['amount_usd']:.2f}</td>
+                    <td>${transaction['debit_usd']:.2f}</td>
                     <td>{transaction['ttm_rate']:.2f}</td>
                     <td>¥{transaction['amount_jpy']:.0f}</td>
+                    <td>¥{transaction['debit_jpy']:.0f}</td>
+                    <td class="{profit_class}">${transaction['cumulative_profit']:.2f}</td>
                 </tr>
             """
         
@@ -623,7 +694,9 @@ async def export_pdf(data: ExportData):
                 <tr>
                     <th>Month</th>
                     <th>Total USD</th>
+                    <th>Total Debit USD</th>
                     <th>Total JPY</th>
+                    <th>Total Debit JPY</th>
                     <th>Transaction Count</th>
                 </tr>
         """
@@ -634,7 +707,9 @@ async def export_pdf(data: ExportData):
                 <tr>
                     <td>{month['month']}</td>
                     <td>${month['total_usd']:.2f}</td>
+                    <td>${month['total_debit_usd']:.2f}</td>
                     <td>¥{month['total_jpy']:.0f}</td>
+                    <td>¥{month['total_debit_jpy']:.0f}</td>
                     <td>{month['transaction_count']}</td>
                 </tr>
             """
@@ -642,11 +717,21 @@ async def export_pdf(data: ExportData):
         html_content += f"""
             </table>
             
+            <h2>Profit Analysis</h2>
+            <div class="profit-analysis">
+                <p><strong>Last Withdrawal Date:</strong> {data.results.profit_analysis['last_withdrawal_date'] or 'No withdrawals'}</p>
+                <p><strong>Last Withdrawal Amount:</strong> ${data.results.profit_analysis['last_withdrawal_amount_usd']:.2f} (¥{data.results.profit_analysis['last_withdrawal_amount_jpy']:.0f})</p>
+                <p><strong>Cumulative Profit:</strong> ${data.results.profit_analysis['cumulative_profit_usd']:.2f} (¥{data.results.profit_analysis['cumulative_profit_jpy']:.0f})</p>
+                <p><strong>Total Profit:</strong> ${data.results.profit_analysis['total_profit_usd']:.2f} (¥{data.results.profit_analysis['total_profit_jpy']:.0f})</p>
+            </div>
+            
             <h2>Overall Summary</h2>
             <div class="summary">
                 <p><strong>Total Transactions:</strong> {data.results.summary['totalTransactions']}</p>
                 <p><strong>Total USD:</strong> ${data.results.summary['totalUsd']:.2f}</p>
+                <p><strong>Total Debit USD:</strong> ${data.results.summary['totalDebitUsd']:.2f}</p>
                 <p><strong>Total JPY:</strong> ¥{data.results.summary['totalJpy']:.0f}</p>
+                <p><strong>Total Debit JPY:</strong> ¥{data.results.summary['totalDebitJpy']:.0f}</p>
                 <p><strong>Average TTM Rate:</strong> {data.results.summary['averageTtmRate']:.2f}</p>
             </div>
             
