@@ -4,14 +4,27 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 interface Transaction {
   date: string;
   amount_usd: number;
+  debit_usd: number;
   ttm_rate: number;
   amount_jpy: number;
+  debit_jpy: number;
   vendor: string;
+  type: 'credit' | 'debit';
+  cumulative_profit: number;
 }
 
 interface ResultsTableProps {
   data: {
     transactions: Transaction[];
+    profit_analysis: {
+      last_withdrawal_date: string | null;
+      last_withdrawal_amount_usd: number;
+      last_withdrawal_amount_jpy: number;
+      cumulative_profit_usd: number;
+      cumulative_profit_jpy: number;
+      total_profit_usd: number;
+      total_profit_jpy: number;
+    };
   };
 }
 
@@ -31,7 +44,7 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({ data }) => {
   };
 
   const sortedTransactions = [...data.transactions].sort((a, b) => {
-    if (sortField === 'date' || sortField === 'vendor') {
+    if (sortField === 'date' || sortField === 'vendor' || sortField === 'type') {
       return sortDirection === 'asc'
         ? a[sortField].localeCompare(b[sortField])
         : b[sortField].localeCompare(a[sortField]);
@@ -60,6 +73,44 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({ data }) => {
 
   return (
     <div>
+      {/* 利益分析サマリー */}
+      <div className="bg-green-50 dark:bg-green-900/10 p-4 rounded-lg mb-6">
+        <h3 className="text-lg font-semibold mb-4">利益分析サマリー</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div>
+            <p className="text-sm text-gray-600 dark:text-gray-400">最終出金日</p>
+            <p className="font-medium">{data.profit_analysis.last_withdrawal_date || '出金なし'}</p>
+          </div>
+          <div>
+            <p className="text-sm text-gray-600 dark:text-gray-400">最終出金額</p>
+            <p className="font-medium">
+              ${data.profit_analysis.last_withdrawal_amount_usd.toFixed(2)}
+              <span className="text-sm text-gray-500 dark:text-gray-400">
+                (¥{data.profit_analysis.last_withdrawal_amount_jpy.toLocaleString()})
+              </span>
+            </p>
+          </div>
+          <div>
+            <p className="text-sm text-gray-600 dark:text-gray-400">累積利益</p>
+            <p className={`font-medium ${data.profit_analysis.cumulative_profit_usd >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+              ${data.profit_analysis.cumulative_profit_usd.toFixed(2)}
+              <span className="text-sm text-gray-500 dark:text-gray-400">
+                (¥{data.profit_analysis.cumulative_profit_jpy.toLocaleString()})
+              </span>
+            </p>
+          </div>
+          <div>
+            <p className="text-sm text-gray-600 dark:text-gray-400">総利益</p>
+            <p className={`font-medium ${data.profit_analysis.total_profit_usd >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+              ${data.profit_analysis.total_profit_usd.toFixed(2)}
+              <span className="text-sm text-gray-500 dark:text-gray-400">
+                (¥{data.profit_analysis.total_profit_jpy.toLocaleString()})
+              </span>
+            </p>
+          </div>
+        </div>
+      </div>
+
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
           <thead className="bg-gray-50 dark:bg-gray-800">
@@ -83,7 +134,14 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({ data }) => {
                 className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer"
                 onClick={() => handleSort('amount_usd')}
               >
-                USD <SortIcon field="amount_usd" />
+                入金額(USD) <SortIcon field="amount_usd" />
+              </th>
+              <th
+                scope="col"
+                className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer"
+                onClick={() => handleSort('debit_usd')}
+              >
+                出金額(USD) <SortIcon field="debit_usd" />
               </th>
               <th
                 scope="col"
@@ -97,7 +155,21 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({ data }) => {
                 className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer"
                 onClick={() => handleSort('amount_jpy')}
               >
-                JPY <SortIcon field="amount_jpy" />
+                入金額(JPY) <SortIcon field="amount_jpy" />
+              </th>
+              <th
+                scope="col"
+                className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer"
+                onClick={() => handleSort('debit_jpy')}
+              >
+                出金額(JPY) <SortIcon field="debit_jpy" />
+              </th>
+              <th
+                scope="col"
+                className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer"
+                onClick={() => handleSort('cumulative_profit')}
+              >
+                累積利益 <SortIcon field="cumulative_profit" />
               </th>
             </tr>
           </thead>
@@ -113,11 +185,24 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({ data }) => {
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-200">
                   ${transaction.amount_usd.toFixed(2)}
                 </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-red-600 dark:text-red-400">
+                  ${transaction.debit_usd.toFixed(2)}
+                </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-200">
                   {transaction.ttm_rate.toFixed(2)}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-200">
                   ¥{transaction.amount_jpy.toLocaleString()}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-red-600 dark:text-red-400">
+                  ¥{transaction.debit_jpy.toLocaleString()}
+                </td>
+                <td className={`px-6 py-4 whitespace-nowrap text-sm ${
+                  transaction.cumulative_profit >= 0 
+                    ? 'text-green-600 dark:text-green-400' 
+                    : 'text-red-600 dark:text-red-400'
+                }`}>
+                  ${transaction.cumulative_profit.toFixed(2)}
                 </td>
               </tr>
             ))}
