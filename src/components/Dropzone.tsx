@@ -47,8 +47,16 @@ export const Dropzone: React.FC<DropzoneProps> = ({ onDrop, disabled = false }) 
           または、クリックしてファイルを選択
         </p>
         <p className="text-xs text-gray-400 dark:text-gray-500 mt-4">
-          取引履歴のCSVファイルをアップロードしてください
+          Payoneerの取引履歴CSVファイルをアップロードしてください
         </p>
+        <div className="mt-4 text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 p-3 rounded">
+          <p className="font-medium mb-1">必須カラム:</p>
+          <ul className="list-disc list-inside">
+            <li>Transaction Date (取引日)</li>
+            <li>Credit amount (入金額) または Debit amount (出金額)</li>
+            <li>Description (取引先情報)</li>
+          </ul>
+        </div>
       </div>
     </div>
   );
