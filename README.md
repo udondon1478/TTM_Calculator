@@ -12,6 +12,14 @@ This application helps with tax filing by automatically converting USD transacti
 - **Export Options**: Export results as CSV or HTML/PDF
 - **Dark Mode Support**: Toggle between light and dark themes
 
+## CSV Format Requirements
+
+This web application is designed to import CSV files exported from Payoneer.
+
+The application expects CSV files with at least the following columns:
+- `Transaction Date`: Transaction date (in a format parseable by pandas)
+- `Credit amount`: Transaction amount in USD
+
 ## Tech Stack
 
 ### Frontend
@@ -61,14 +69,6 @@ This application helps with tax filing by automatically converting USD transacti
    ```
 
 3. Open your browser and navigate to `http://localhost:5173`
-
-## CSV Format Requirements
-
-This web application is designed to import CSV files exported from Payoneer.
-
-The application expects CSV files with at least the following columns:
-- `Transaction Date`: Transaction date (in a format parseable by pandas)
-- `Credit amount`: Transaction amount in USD
 
 ## License
 
