@@ -358,12 +358,14 @@ async def process_csv(file: UploadFile):
         # Log sample data for debugging
         logger.info(f"Sample data:\n{df.head()}")
         
-        # Convert date format and sort by date
+        # Convert date format and sort by date and time
         try:
             df['Transaction date'] = pd.to_datetime(df['Transaction date'])
-            df = df.sort_values('Transaction date')
+            df['Transaction time'] = pd.to_datetime(df['Transaction time'], format='%H:%M:%S').dt.time
+            # 日付と時刻でソート
+            df = df.sort_values(['Transaction date', 'Transaction time'], ascending=True)
         except Exception as e:
-            error_msg = f"Error converting dates: {str(e)}"
+            error_msg = f"Error converting dates and times: {str(e)}"
             logger.error(error_msg)
             raise HTTPException(status_code=400, detail=error_msg)
         
@@ -376,13 +378,15 @@ async def process_csv(file: UploadFile):
         last_debit_date = (first_date - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
         logger.info(f"Setting initial last_debit_date to: {last_debit_date}")
         
-        accumulated_credit = 0
-        accumulated_credit_jpy = 0
+        # 未出金の入金取引を追跡するためのリスト
+        pending_credits = []
         
         # Process each transaction
         for index, row in df.iterrows():
             try:
                 date = row['Transaction date'].strftime('%Y-%m-%d')
+                time = row['Transaction time'].strftime('%H:%M:%S')
+                datetime_str = f"{date} {time}"
                 ttm_rate = get_ttm_rate(date)
                 
                 # Determine if this is a credit or debit transaction
@@ -390,7 +394,7 @@ async def process_csv(file: UploadFile):
                 debit_amount = row['Debit amount'] if pd.notna(row['Debit amount']) else 0
                 
                 # Log transaction details for debugging
-                logger.info(f"Processing row {index}: Date={date}, Credit={credit_amount}, Debit={debit_amount}")
+                logger.info(f"Processing row {index}: DateTime={datetime_str}, Credit={credit_amount}, Debit={debit_amount}")
                 
                 # Calculate JPY amounts (rounded to nearest integer)
                 credit_amount_jpy = round(credit_amount * ttm_rate)
@@ -401,33 +405,66 @@ async def process_csv(file: UploadFile):
                 amount_usd = credit_amount if transaction_type == 'credit' else debit_amount
                 amount_jpy = credit_amount_jpy if transaction_type == 'credit' else debit_amount_jpy
                 
-                # Calculate profit since last debit (for debit transactions)
-                profit_since_last_debit = None
-                if transaction_type == 'debit':
-                    profit_since_last_debit = {
-                        'from_date': last_debit_date,
-                        'to_date': date,
-                        'profit_usd': accumulated_credit - debit_amount,
-                        'profit_jpy': accumulated_credit_jpy - debit_amount_jpy
-                    }
-                    last_debit_date = date
-                    accumulated_credit = 0
-                    accumulated_credit_jpy = 0
+                # Calculate exchange rate profit/loss for credit transactions
+                exchange_profit = None
+                
+                if transaction_type == 'credit':
+                    # 入金取引の場合、未出金リストに追加
+                    pending_credits.append({
+                        'date': date,
+                        'time': time,
+                        'datetime': datetime_str,
+                        'amount': credit_amount,
+                        'ttm_rate': ttm_rate,
+                        'amount_jpy': credit_amount_jpy
+                    })
+                    logger.info(f"Added credit transaction to pending list: {datetime_str}, ${credit_amount}")
                 else:
-                    accumulated_credit += credit_amount
-                    accumulated_credit_jpy += credit_amount_jpy
+                    # 出金取引の場合、未出金の入金取引に対して為替差損益を計算
+                    for pending in pending_credits:
+                        initial_value = pending['amount'] * pending['ttm_rate']
+                        final_value = pending['amount'] * ttm_rate
+                        profit = final_value - initial_value
+                        
+                        logger.info(f"Calculating exchange profit for credit on {pending['datetime']}:")
+                        logger.info(f"  Amount: ${pending['amount']}")
+                        logger.info(f"  Initial TTM: {pending['ttm_rate']}")
+                        logger.info(f"  Debit datetime: {datetime_str}")
+                        logger.info(f"  Debit TTM: {ttm_rate}")
+                        logger.info(f"  Initial value: ¥{initial_value}")
+                        logger.info(f"  Final value: ¥{final_value}")
+                        logger.info(f"  Profit: ¥{profit}")
+                        
+                        # 対応する入金取引の為替差損益を更新
+                        for t in transactions:
+                            if t['date'] == pending['date'] and t['time'] == pending['time']:
+                                t['exchange_profit'] = {
+                                    'next_debit_date': date,
+                                    'next_debit_time': time,
+                                    'next_debit_ttm': ttm_rate,
+                                    'profit_jpy': profit
+                                }
+                                break
+                    
+                    # 未出金リストをクリア
+                    pending_credits = []
                 
                 # Create transaction record
                 transaction = {
                     'date': date,
+                    'time': time,
+                    'datetime': datetime_str,
                     'vendor': row['Description'],
                     'type': transaction_type,
                     'amount_usd': amount_usd,
                     'ttm_rate': ttm_rate,
                     'amount_jpy': amount_jpy,
-                    'profit_since_last_debit': profit_since_last_debit
+                    'exchange_profit': exchange_profit
                 }
                 transactions.append(transaction)
+                
+                # Log the complete transaction record
+                logger.info(f"Transaction record created: {json.dumps(transaction, indent=2)}")
                 
                 # Update monthly data
                 month = row['Transaction date'].strftime('%Y-%m')
@@ -437,12 +474,17 @@ async def process_csv(file: UploadFile):
                         'total_usd': 0,
                         'total_jpy': 0,
                         'transaction_count': 0,
-                        'vendor_transactions': {}
+                        'vendor_transactions': {},
+                        'total_exchange_profit': 0
                     }
                 
                 monthly_data[month]['total_usd'] += amount_usd
                 monthly_data[month]['total_jpy'] += amount_jpy
                 monthly_data[month]['transaction_count'] += 1
+                
+                # Update exchange profit in monthly data
+                if exchange_profit:
+                    monthly_data[month]['total_exchange_profit'] += exchange_profit['profit_jpy']
                 
                 # Update vendor transactions in monthly data
                 vendor = row['Description']
@@ -450,11 +492,14 @@ async def process_csv(file: UploadFile):
                     monthly_data[month]['vendor_transactions'][vendor] = {
                         'usd': 0,
                         'jpy': 0,
-                        'count': 0
+                        'count': 0,
+                        'exchange_profit': 0
                     }
                 monthly_data[month]['vendor_transactions'][vendor]['usd'] += amount_usd
                 monthly_data[month]['vendor_transactions'][vendor]['jpy'] += amount_jpy
                 monthly_data[month]['vendor_transactions'][vendor]['count'] += 1
+                if exchange_profit:
+                    monthly_data[month]['vendor_transactions'][vendor]['exchange_profit'] += exchange_profit['profit_jpy']
                 
             except Exception as e:
                 error_msg = f"Error processing row {index}: {str(e)}"
@@ -471,6 +516,13 @@ async def process_csv(file: UploadFile):
             total_debit_usd = sum(t['amount_usd'] for t in debit_transactions)
             total_debit_jpy = sum(t['amount_jpy'] for t in debit_transactions)
             
+            # Calculate total exchange profit
+            total_exchange_profit = sum(
+                t['exchange_profit']['profit_jpy']
+                for t in credit_transactions
+                if t['exchange_profit'] is not None
+            )
+            
             summary = {
                 'totalTransactions': len(transactions),
                 'creditTransactions': len(credit_transactions),
@@ -481,7 +533,8 @@ async def process_csv(file: UploadFile):
                 'totalDebitJpy': total_debit_jpy,
                 'netUsd': total_credit_usd - total_debit_usd,
                 'netJpy': total_credit_jpy - total_debit_jpy,
-                'averageTtmRate': sum(t['ttm_rate'] for t in transactions) / len(transactions)
+                'averageTtmRate': sum(t['ttm_rate'] for t in transactions) / len(transactions),
+                'totalExchangeProfit': total_exchange_profit
             }
             
             return {

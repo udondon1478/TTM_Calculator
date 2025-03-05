@@ -8,10 +8,9 @@ interface Transaction {
   amount_jpy: number;
   vendor: string;
   type: 'credit' | 'debit';
-  profit_since_last_debit?: {
-    from_date: string;
-    to_date: string;
-    profit_usd: number;
+  exchange_profit?: {
+    next_debit_date: string;
+    next_debit_ttm: number;
     profit_jpy: number;
   } | null;
 }
@@ -43,10 +42,18 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({ data }) => {
       return sortDirection === 'asc'
         ? a[sortField].localeCompare(b[sortField])
         : b[sortField].localeCompare(a[sortField]);
-    } else {
+    } else if (sortField === 'exchange_profit') {
+      const aValue = a.exchange_profit?.profit_jpy || 0;
+      const bValue = b.exchange_profit?.profit_jpy || 0;
       return sortDirection === 'asc'
-        ? a[sortField] - b[sortField]
-        : b[sortField] - a[sortField];
+        ? aValue - bValue
+        : bValue - aValue;
+    } else {
+      const aValue = a[sortField];
+      const bValue = b[sortField];
+      return sortDirection === 'asc'
+        ? aValue - bValue
+        : bValue - aValue;
     }
   });
 
@@ -123,6 +130,13 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({ data }) => {
               </th>
               <th
                 scope="col"
+                className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer"
+                onClick={() => handleSort('exchange_profit')}
+              >
+                為替差損益 <SortIcon field="exchange_profit" />
+              </th>
+              <th
+                scope="col"
                 className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider"
               >
                 詳細
@@ -159,27 +173,38 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({ data }) => {
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-200">
                     ¥{transaction.amount_jpy.toLocaleString()}
                   </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">
+                    {transaction.exchange_profit && (
+                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                        transaction.exchange_profit.profit_jpy >= 0
+                          ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                          : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                      }`}>
+                        ¥{transaction.exchange_profit.profit_jpy.toLocaleString()}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-200">
-                    {transaction.type === 'debit' && transaction.profit_since_last_debit && (
+                    {transaction.exchange_profit && (
                       <button
                         onClick={() => toggleProfitDetails(transaction.date)}
                         className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
                       >
-                        {showProfitDetails[transaction.date] ? '隠す' : '利益表示'}
+                        {showProfitDetails[transaction.date] ? '隠す' : '詳細表示'}
                       </button>
                     )}
                   </td>
                 </tr>
-                {transaction.type === 'debit' && 
-                 transaction.profit_since_last_debit && 
-                 showProfitDetails[transaction.date] && (
+                {transaction.exchange_profit && showProfitDetails[transaction.date] && (
                   <tr className="bg-blue-50 dark:bg-blue-900/10">
-                    <td colSpan={7} className="px-6 py-4">
+                    <td colSpan={8} className="px-6 py-4">
                       <div className="text-sm">
-                        <h4 className="font-medium mb-2">出金時利益計算</h4>
-                        <p><span className="font-medium">期間:</span> {transaction.profit_since_last_debit.from_date || '(初回)'} から {transaction.profit_since_last_debit.to_date} まで</p>
-                        <p><span className="font-medium">USD利益:</span> ${transaction.profit_since_last_debit.profit_usd.toFixed(2)}</p>
-                        <p><span className="font-medium">JPY利益:</span> ¥{transaction.profit_since_last_debit.profit_jpy.toLocaleString()}</p>
+                        <h4 className="font-medium mb-2">為替差損益計算</h4>
+                        <p><span className="font-medium">取引日:</span> {transaction.date}</p>
+                        <p><span className="font-medium">取引時TTM:</span> {transaction.ttm_rate.toFixed(2)}</p>
+                        <p><span className="font-medium">次の出金日:</span> {transaction.exchange_profit.next_debit_date}</p>
+                        <p><span className="font-medium">出金時TTM:</span> {transaction.exchange_profit.next_debit_ttm.toFixed(2)}</p>
+                        <p><span className="font-medium">為替差損益:</span> ¥{transaction.exchange_profit.profit_jpy.toLocaleString()}</p>
                       </div>
                     </td>
                   </tr>

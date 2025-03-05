@@ -247,17 +247,19 @@ function App() {
                   </div>
                 </div>
               </div>
-              
-              <div className="mt-4 bg-white dark:bg-gray-800 p-4 rounded-md shadow">
-                <h4 className="text-md font-medium text-gray-700 dark:text-gray-300 mb-3">純利益</h4>
-                <div className="grid grid-cols-2 gap-2">
+
+              <div className="mt-4">
+                <div className="bg-white dark:bg-gray-800 p-4 rounded-md shadow">
+                  <h4 className="text-md font-medium text-gray-700 dark:text-gray-300 mb-3">為替差損益</h4>
                   <div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">USD純利益</p>
-                    <p className="text-xl font-bold">${results?.summary?.netUsd?.toFixed(2) || 0}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">JPY純利益</p>
-                    <p className="text-xl font-bold">¥{results?.summary?.netJpy?.toLocaleString() || 0}</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">年間合計</p>
+                    <p className={`text-xl font-bold ${
+                      (results?.summary?.totalExchangeProfit || 0) >= 0
+                        ? 'text-green-600'
+                        : 'text-red-600'
+                    }`}>
+                      ¥{(results?.summary?.totalExchangeProfit || 0).toLocaleString()}
+                    </p>
                   </div>
                 </div>
               </div>
