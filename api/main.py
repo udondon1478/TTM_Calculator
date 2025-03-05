@@ -1,6 +1,6 @@
 from fastapi import FastAPI, UploadFile, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import pandas as pd
@@ -329,6 +329,110 @@ class ProcessResult(BaseModel):
     monthly: List[Dict[str, Any]]
     summary: Dict[str, Any]
 
+@app.post("/api/export/csv")
+async def export_csv(data: ProcessResult):
+    """Export transaction data to CSV format."""
+    try:
+        # Create CSV content with proper line endings and delimiter
+        output = io.StringIO()
+        writer = csv.writer(output, delimiter=',', lineterminator='\n')
+        
+        # Write headers
+        writer.writerow([
+            'Date', 'Time', 'Vendor', 'Type', 'Amount (USD)', 'TTM Rate',
+            'Amount (JPY)', 'Exchange Gain/Loss (JPY)', 'Next Withdrawal Date',
+            'Next Withdrawal Time', 'Next Withdrawal TTM Rate'
+        ])
+        
+        # Write transaction data
+        for transaction in data.transactions:
+            if transaction is None:
+                logger.warning("Skipping None transaction")
+                continue
+                
+            exchange_profit = transaction.get('exchange_profit', {}) if transaction.get('exchange_profit') is not None else {}
+            writer.writerow([
+                transaction.get('date', ''),
+                transaction.get('time', ''),
+                transaction.get('vendor', ''),
+                transaction.get('type', ''),
+                transaction.get('amount_usd', ''),
+                transaction.get('ttm_rate', ''),
+                transaction.get('amount_jpy', ''),
+                exchange_profit.get('profit_jpy', ''),
+                exchange_profit.get('next_debit_date', ''),
+                exchange_profit.get('next_debit_time', ''),
+                exchange_profit.get('next_debit_ttm', '')
+            ])
+        
+        # Add monthly summary
+        writer.writerow([])  # Empty row for separation
+        writer.writerow(['Monthly Summary'])
+        writer.writerow([
+            'Month', 'Total USD', 'Total JPY', 'Transaction Count',
+            'Total Exchange Profit'
+        ])
+        
+        for month_data in data.monthly:
+            if month_data is None:
+                logger.warning("Skipping None month_data")
+                continue
+                
+            writer.writerow([
+                month_data.get('month', ''),
+                month_data.get('total_usd', ''),
+                month_data.get('total_jpy', ''),
+                month_data.get('transaction_count', ''),
+                month_data.get('total_exchange_profit', '')
+            ])
+        
+        # Add overall summary
+        writer.writerow([])  # Empty row for separation
+        writer.writerow(['Overall Summary'])
+        writer.writerow([
+            'Total Transactions', 'Credit Transactions', 'Debit Transactions',
+            'Total Credit (USD)', 'Total Credit (JPY)', 'Total Debit (USD)',
+            'Total Debit (JPY)', 'Net (USD)', 'Net (JPY)', 'Average TTM Rate',
+            'Total Exchange Profit'
+        ])
+        
+        if data.summary is not None:
+            writer.writerow([
+                data.summary.get('totalTransactions', ''),
+                data.summary.get('creditTransactions', ''),
+                data.summary.get('debitTransactions', ''),
+                data.summary.get('totalCreditUsd', ''),
+                data.summary.get('totalCreditJpy', ''),
+                data.summary.get('totalDebitUsd', ''),
+                data.summary.get('totalDebitJpy', ''),
+                data.summary.get('netUsd', ''),
+                data.summary.get('netJpy', ''),
+                data.summary.get('averageTtmRate', ''),
+                data.summary.get('totalExchangeProfit', '')
+            ])
+        
+        # Get CSV content and close the StringIO
+        csv_content = output.getvalue()
+        output.close()
+        
+        # Create a new StringIO with the CSV content
+        csv_file = io.StringIO(csv_content)
+        
+        # Return StreamingResponse with proper headers
+        return StreamingResponse(
+            iter([csv_file.getvalue()]),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename=transactions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Error exporting CSV: {e}")
+        error_msg = f"Error exporting CSV: {str(e)}"
+        logger.error(error_msg)
+        raise HTTPException(status_code=500, detail=error_msg)
+
 @app.post("/api/process")
 async def process_csv(file: UploadFile):
     """Process a CSV file with transaction data."""
@@ -424,7 +528,7 @@ async def process_csv(file: UploadFile):
                     for pending in pending_credits:
                         initial_value = pending['amount'] * pending['ttm_rate']
                         final_value = pending['amount'] * ttm_rate
-                        profit = final_value - initial_value
+                        profit = round(final_value - initial_value)  # 四捨五入を追加
                         
                         logger.info(f"Calculating exchange profit for credit on {pending['datetime']}:")
                         logger.info(f"  Amount: ${pending['amount']}")

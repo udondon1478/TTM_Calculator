@@ -82,7 +82,11 @@ function App() {
       axios({
         url: 'http://localhost:8000/api/export/csv',
         method: 'POST',
-        data: { results },
+        data: {
+          transactions: results.transactions,
+          monthly: results.monthly,
+          summary: results.summary
+        },
         responseType: 'blob'
       }).then((response) => {
         const url = window.URL.createObjectURL(new Blob([response.data]));

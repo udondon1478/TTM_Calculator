@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
+import axios from 'axios';
 
 interface Transaction {
   date: string;
+  time?: string;
   amount_usd: number;
   ttm_rate: number;
   amount_jpy: number;
@@ -78,6 +80,54 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({ data }) => {
     ) : (
       <ChevronDown size={16} className="inline ml-1" />
     );
+  };
+
+  const exportCSV = async () => {
+    try {
+      const response = await axios.post('/api/export/csv', {
+        transactions: data.transactions.map(t => ({
+          date: t.date,
+          time: t.time || '',
+          vendor: t.vendor,
+          type: t.type,
+          amount_usd: t.amount_usd,
+          ttm_rate: t.ttm_rate,
+          amount_jpy: t.amount_jpy,
+          exchange_profit: t.exchange_profit || null
+        })),
+        monthly: [],
+        summary: {
+          totalTransactions: data.transactions.length,
+          creditTransactions: data.transactions.filter(t => t.type === 'credit').length,
+          debitTransactions: data.transactions.filter(t => t.type === 'debit').length,
+          totalCreditUsd: data.transactions.filter(t => t.type === 'credit').reduce((sum, t) => sum + t.amount_usd, 0),
+          totalCreditJpy: data.transactions.filter(t => t.type === 'credit').reduce((sum, t) => sum + t.amount_jpy, 0),
+          totalDebitUsd: data.transactions.filter(t => t.type === 'debit').reduce((sum, t) => sum + t.amount_usd, 0),
+          totalDebitJpy: data.transactions.filter(t => t.type === 'debit').reduce((sum, t) => sum + t.amount_jpy, 0),
+          netUsd: data.transactions.filter(t => t.type === 'credit').reduce((sum, t) => sum + t.amount_usd, 0) -
+                 data.transactions.filter(t => t.type === 'debit').reduce((sum, t) => sum + t.amount_usd, 0),
+          netJpy: data.transactions.filter(t => t.type === 'credit').reduce((sum, t) => sum + t.amount_jpy, 0) -
+                 data.transactions.filter(t => t.type === 'debit').reduce((sum, t) => sum + t.amount_jpy, 0),
+          averageTtmRate: data.transactions.reduce((sum, t) => sum + t.ttm_rate, 0) / data.transactions.length,
+          totalExchangeProfit: data.transactions
+            .filter(t => t.exchange_profit)
+            .reduce((sum, t) => sum + (t.exchange_profit?.profit_jpy || 0), 0)
+        }
+      });
+
+      const { content, filename } = response.data;
+
+      const blob = new Blob([content], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('CSVエクスポートエラー:', error);
+      alert('CSVエクスポートに失敗しました。');
+    }
   };
 
   return (
@@ -282,6 +332,15 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({ data }) => {
           </div>
         </div>
       )}
+
+      <div className="mt-4">
+        <button
+          onClick={exportCSV}
+          className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+        >
+          CSVエクスポート
+        </button>
+      </div>
     </div>
   );
 };
