@@ -370,7 +370,12 @@ async def process_csv(file: UploadFile):
         # Initialize lists for processed data
         transactions = []
         monthly_data = {}
-        last_debit_date = None
+        
+        # Get the first date from the CSV and set it as the last debit date
+        first_date = df['Transaction date'].min()
+        last_debit_date = (first_date - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+        logger.info(f"Setting initial last_debit_date to: {last_debit_date}")
+        
         accumulated_credit = 0
         accumulated_credit_jpy = 0
         
